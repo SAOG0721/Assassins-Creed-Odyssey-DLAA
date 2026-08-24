@@ -1,0 +1,13 @@
+/build/
+/dist/
+/.vs/
+*.log
+*.pdb
+*.user
+*.suo
+*.VC.db
+CMakeUserPresets.json
+.acodyssey-dlaa-deployment.json
+third_party/minhook/.git.local-not-published/
+third_party/minhook/.github.local-not-published/
+third_party/minhook/build.local-not-published/

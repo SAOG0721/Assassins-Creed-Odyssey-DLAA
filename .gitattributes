@@ -1,0 +1,14 @@
+* text=auto
+*.cpp text eol=lf
+*.h text eol=lf
+*.hlsl text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.ini text eol=crlf
+*.ps1 text eol=crlf
+*.def text eol=crlf
+
+# Preserve third-party files exactly as distributed while excluding their legacy whitespace from
+# the first-party staged-diff check.
+LICENSES/NVIDIA-RTX-SDK-LICENSE.txt whitespace=-blank-at-eof
+third_party/minhook/** whitespace=-trailing-space
