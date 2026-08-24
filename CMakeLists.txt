@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(acodyssey_dlaa VERSION 1.0.0 LANGUAGES C CXX)
+project(acodyssey_dlaa VERSION 1.0.1 LANGUAGES C CXX)
 
 set(MINHOOK_ROOT
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/minhook"

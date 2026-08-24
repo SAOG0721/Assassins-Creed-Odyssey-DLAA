@@ -25,8 +25,6 @@
 
 namespace
 {
-constexpr char kExpectedExeSha256[] =
-    "AC327DAD2CBBDD72A3FDA8E99CBEAB9D12AF328363E4F09BC5674BDD36B8C483";
 constexpr uint32_t kShaderInfoMagic = 0x41415441; // "ATAA"
 constexpr wchar_t kConfigName[] = L"ACOdysseyDLAA.ini";
 constexpr wchar_t kLogName[] = L"ACOdysseyDLAA.log";
@@ -67,7 +65,6 @@ AcoDlaaEvaluateFn g_bridgeEvaluate{};
 HANDLE g_log = INVALID_HANDLE_VALUE;
 std::mutex g_logMutex;
 std::atomic<bool> g_workerStarted{};
-std::atomic<bool> g_versionVerified{};
 std::atomic<uint32_t> g_temporalShaderCount{};
 std::atomic<uint32_t> g_taaDrawLogCount{};
 std::atomic<uint64_t> g_captureSequence{};
@@ -206,62 +203,6 @@ bool Sha256Bytes(const void* data, size_t size, std::array<uint8_t, 32>& digest)
     if (algorithm)
         BCryptCloseAlgorithmProvider(algorithm, 0);
     return ok;
-}
-
-std::string Sha256File(const std::wstring& path)
-{
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (file == INVALID_HANDLE_VALUE)
-        return {};
-
-    BCRYPT_ALG_HANDLE algorithm{};
-    BCRYPT_HASH_HANDLE hash{};
-    DWORD objectLength{};
-    DWORD resultLength{};
-    std::vector<uint8_t> object;
-    std::array<uint8_t, 32> digest{};
-    bool ok = BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0;
-    if (ok)
-        ok = BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
-                 reinterpret_cast<PUCHAR>(&objectLength), sizeof(objectLength), &resultLength, 0) >= 0;
-    if (ok)
-    {
-        object.resize(objectLength);
-        ok = BCryptCreateHash(algorithm, &hash, object.data(), objectLength, nullptr, 0, 0) >= 0;
-    }
-
-    // CreateThread inherits the host executable's default stack reservation. Odyssey's
-    // reservation is smaller than a 1 MiB local buffer, so keep the streaming buffer on the heap.
-    std::vector<uint8_t> buffer(1024 * 1024);
-    while (ok)
-    {
-        DWORD read{};
-        if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr))
-        {
-            ok = false;
-            break;
-        }
-        if (!read)
-            break;
-        ok = BCryptHashData(hash, buffer.data(), read, 0) >= 0;
-    }
-    if (ok)
-        ok = BCryptFinishHash(hash, digest.data(), static_cast<ULONG>(digest.size()), 0) >= 0;
-
-    if (hash)
-        BCryptDestroyHash(hash);
-    if (algorithm)
-        BCryptCloseAlgorithmProvider(algorithm, 0);
-    CloseHandle(file);
-    return ok ? Hex(digest.data(), digest.size()) : std::string{};
-}
-
-std::string CurrentExecutableSha256()
-{
-    std::array<wchar_t, 32768> path{};
-    const DWORD count = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
-    return count && count < path.size() ? Sha256File(std::wstring(path.data(), count)) : std::string{};
 }
 
 bool ContainsString(const void* data, size_t size, const char* text)
@@ -1579,16 +1520,7 @@ DWORD WINAPI HookWorker(void*)
         g_presentationToggleKey = configuredToggleKey;
     g_presentationMode.store(g_evaluateOnly
         ? ACO_DLAA_PRESENT_GAME_TAA : ACO_DLAA_PRESENT_DLAA);
-    WriteLog(std::string("ACOdysseyDLAA probe starting expectedExeSha256=") + kExpectedExeSha256);
-    const std::string actualHash = CurrentExecutableSha256();
-    if (actualHash != kExpectedExeSha256)
-    {
-        WriteLog(std::string("RUNTIME_VERSION_CHECK failed actual=") +
-            (actualHash.empty() ? "unavailable" : actualHash) + " hooks=disabled");
-        return 0;
-    }
-    g_versionVerified.store(true);
-    WriteLog(std::string("RUNTIME_VERSION_CHECK passed actual=") + actualHash);
+    WriteLog("ACOdysseyDLAA starting compatibility=shader-and-resource-detection");
 
     if (g_dlaaEnabled)
     {

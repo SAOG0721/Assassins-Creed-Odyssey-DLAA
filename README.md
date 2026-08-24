@@ -22,17 +22,16 @@ game's internal rendering resolution and should not be expected to improve frame
 
 - Windows 10 or Windows 11, 64-bit.
 - An NVIDIA RTX GPU and a current NVIDIA display driver.
-- Steam build `17083392` of *Assassin's Creed Odyssey*.
-- Verified `ACOdyssey.exe` SHA-256:
-  `AC327DAD2CBBDD72A3FDA8E99CBEAB9D12AF328363E4F09BC5674BDD36B8C483`.
+- Tested on Steam build `17083392` of *Assassin's Creed Odyssey*.
 
-The mod intentionally stays inactive when the executable hash does not match. Other editions,
-future game updates, or mods that also install `dinput8.dll` are not currently supported.
+The mod does not enforce an executable hash. It uses runtime shader and resource validation and
+keeps Game TAA when a compatible temporal pass is not found. Other editions and future game builds
+have not been verified. Mods that also install `dinput8.dll` are not currently supported.
 
 ### Download and installation
 
-1. Download `ACOdysseyDLAA-v1.0.0.zip` from the
-   [v1.0.0 release](https://github.com/SAOG0721/Assassins-Creed-Odyssey-DLAA/releases/tag/v1.0.0).
+1. Download `ACOdysseyDLAA-v1.0.1.zip` from the
+   [v1.0.1 release](https://github.com/SAOG0721/Assassins-Creed-Odyssey-DLAA/releases/tag/v1.0.1).
 2. Close the game.
 3. Open the game directory containing `ACOdyssey.exe` (Steam → Library → right-click the game →
    Manage → Browse local files).
@@ -76,8 +75,8 @@ values and are not user-adjustable.
 
 The mod creates `ACOdysseyDLAA.log` and `ACOdysseyDLSSBridge.log` in the game directory.
 
-- No effect: confirm the game build and executable hash, check for another `dinput8.dll` mod, and
-  update the NVIDIA driver.
+- No effect: confirm the installed release files, check for another `dinput8.dll` mod, and update
+  the NVIDIA driver.
 - Game TAA remains visible after pressing `F8`: inspect the two logs for `ERROR` lines. The mod
   deliberately falls back instead of replacing the output after a failed DLAA evaluation.
 - Startup problem: remove the six runtime files listed above. The original game files are untouched.
@@ -90,14 +89,14 @@ another mod.
 
 ### Package integrity
 
-`ACOdysseyDLAA-v1.0.0.zip` SHA-256:
+`ACOdysseyDLAA-v1.0.1.zip` SHA-256:
 
 ```text
-09c1de2e8824b99634e2a985029bd9d89b2a952e310fae1d531a8a5a85cacdee
+fa9bd079a92da6939b10f9ef78178b98aced165cff71375df140abf79d76e93e
 ```
 
 Per-file hashes are included in `SHA256SUMS.txt` inside the archive. The archive checksum is also
-available as the `ACOdysseyDLAA-v1.0.0-SHA256SUMS.txt` release attachment.
+available as the `ACOdysseyDLAA-v1.0.1-SHA256SUMS.txt` release attachment.
 
 ### Third-party software and disclaimer
 
@@ -129,17 +128,16 @@ owners. Use the mod at your own risk.
 
 - 64 位 Windows 10 或 Windows 11。
 - NVIDIA RTX 显卡和较新的 NVIDIA 显卡驱动。
-- Steam 版《刺客信条：奥德赛》build `17083392`。
-- 已验证的 `ACOdyssey.exe` SHA-256：
-  `AC327DAD2CBBDD72A3FDA8E99CBEAB9D12AF328363E4F09BC5674BDD36B8C483`。
+- 已测试 Steam 版《刺客信条：奥德赛》build `17083392`。
 
-EXE 哈希不匹配时模组会保持不活动。目前不支持其他商店版本、未来游戏更新，或同样安装
+模组不再强制校验 EXE 哈希，而是通过运行时 shader 和资源验证判断是否存在兼容的时域 pass；
+未找到兼容入口时会保留原版 TAA。其他商店版本和未来游戏版本尚未验证。目前不支持同样安装
 `dinput8.dll` 的其他模组。
 
 ### 下载与安装
 
-1. 从 [v1.0.0 Release](https://github.com/SAOG0721/Assassins-Creed-Odyssey-DLAA/releases/tag/v1.0.0)
-   下载 `ACOdysseyDLAA-v1.0.0.zip`。
+1. 从 [v1.0.1 Release](https://github.com/SAOG0721/Assassins-Creed-Odyssey-DLAA/releases/tag/v1.0.1)
+   下载 `ACOdysseyDLAA-v1.0.1.zip`。
 2. 关闭游戏。
 3. 打开包含 `ACOdyssey.exe` 的游戏目录（Steam → 库 → 右键游戏 → 管理 → 浏览本地文件）。
 4. 如果目录中已有下列同名文件，请先确认归属并自行备份；不要覆盖其他模组的 `dinput8.dll`。
@@ -180,7 +178,7 @@ jitter、运动矢量约定、DLAA 模式和锐化强度均固定为已验证值
 
 模组会在游戏目录生成 `ACOdysseyDLAA.log` 和 `ACOdysseyDLSSBridge.log`。
 
-- 完全不生效：确认游戏 build 和 EXE 哈希，检查是否存在其他 `dinput8.dll` 模组，并更新 NVIDIA 驱动。
+- 完全不生效：确认 Release 文件安装完整，检查是否存在其他 `dinput8.dll` 模组，并更新 NVIDIA 驱动。
 - 按 `F8` 后仍显示原版 TAA：检查两个日志中的 `ERROR`。Evaluate 失败后保留原版 TAA 是预期的
   故障安全行为。
 - 启动异常：删除安装部分列出的六个运行文件即可；原始游戏文件没有被修改。
@@ -192,14 +190,14 @@ jitter、运动矢量约定、DLAA 模式和锐化强度均固定为已验证值
 
 ### 安装包完整性
 
-`ACOdysseyDLAA-v1.0.0.zip` SHA-256：
+`ACOdysseyDLAA-v1.0.1.zip` SHA-256：
 
 ```text
-09c1de2e8824b99634e2a985029bd9d89b2a952e310fae1d531a8a5a85cacdee
+fa9bd079a92da6939b10f9ef78178b98aced165cff71375df140abf79d76e93e
 ```
 
 压缩包内的 `SHA256SUMS.txt` 提供逐文件哈希；压缩包校验值也会作为
-`ACOdysseyDLAA-v1.0.0-SHA256SUMS.txt` Release 附件提供。
+`ACOdysseyDLAA-v1.0.1-SHA256SUMS.txt` Release 附件提供。
 
 ### 第三方软件与免责声明
 

@@ -38,4 +38,5 @@ After a Release build:
 All four commands must exit with code `0`. The synthetic NGX test requires compatible NVIDIA
 hardware and a working display driver.
 
-The proxy is deliberately gated to the audited Steam executable SHA-256 documented in `README.md`.
+The proxy is not executable-hash-gated. Compatibility is determined by runtime shader/resource
+validation, and the original Game TAA is preserved when a compatible temporal pass is not found.

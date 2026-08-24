@@ -12,7 +12,7 @@ The bridge uses NVIDIA NGX interfaces. The binary release includes the productio
 `nvngx_dlss.dll` as part of this application under the NVIDIA RTX SDK License. The complete license
 is included in `LICENSES/NVIDIA-RTX-SDK-LICENSE.txt`.
 
-`nvngx_dlss.dll` SHA-256 for v1.0.0:
+`nvngx_dlss.dll` SHA-256 for v1.0.1:
 
 ```text
 BE6E434A94CA32499515EB62CA0E6C274526055D568D0426E4C652DCDFB6EE6E
