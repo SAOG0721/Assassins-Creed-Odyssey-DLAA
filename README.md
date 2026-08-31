@@ -298,7 +298,7 @@ Windows SDK、NVIDIA NGX SDK、`nvngx_dlss.dll`，以及另行取得的版本匹
 
 ```powershell
 .\build\Release\d3d11-vtable-indices.exe
-.\build\Release\execute-detour-smoke.exe .\build\bin\dinput8.dll
+.\build\Release\execute-detour-smoke.exe
 .\build\Release\d3d11-d3d12-interop-smoke.exe
 .\build\Release\bridge-smoke.exe .\build\bin\ACOdysseyDLSSBridge.dll
 .\build\Release\ngx-synthetic-smoke.exe .\build\bin\ACOdysseyDLSSBridge.dll
