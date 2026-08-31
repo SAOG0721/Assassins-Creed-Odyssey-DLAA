@@ -22,6 +22,7 @@
 
 #include "MinHook.h"
 #include "bridge_api.h"
+#include "control_panel.h"
 
 namespace
 {
@@ -29,6 +30,8 @@ constexpr uint32_t kShaderInfoMagic = 0x41415441; // "ATAA"
 constexpr wchar_t kConfigName[] = L"ACOdysseyDLAA.ini";
 constexpr wchar_t kLogName[] = L"ACOdysseyDLAA.log";
 constexpr wchar_t kBridgeName[] = L"ACOdysseyDLSSBridge.dll";
+constexpr char kSupportedExeSha256[] =
+    "AC327DAD2CBBDD72A3FDA8E99CBEAB9D12AF328363E4F09BC5674BDD36B8C483";
 
 constexpr GUID kShaderInfoGuid{
     0x9144a0c4, 0xdfcc, 0x4797, {0xa1, 0x4a, 0x31, 0x51, 0xba, 0xa1, 0xf9, 0x20}};
@@ -62,9 +65,13 @@ HMODULE g_module{};
 HMODULE g_realDinput8{};
 HMODULE g_bridgeModule{};
 AcoDlaaEvaluateFn g_bridgeEvaluate{};
+AcoDlssNrGetStatusFn g_bridgeGetDlssNrStatus{};
+AcoDlssNrShutdownFn g_bridgeShutdown{};
 HANDLE g_log = INVALID_HANDLE_VALUE;
 std::mutex g_logMutex;
+std::mutex g_bridgeCallMutex;
 std::atomic<bool> g_workerStarted{};
+std::atomic<bool> g_processShutdownStarted{};
 std::atomic<uint32_t> g_temporalShaderCount{};
 std::atomic<uint32_t> g_taaDrawLogCount{};
 std::atomic<uint64_t> g_captureSequence{};
@@ -81,6 +88,7 @@ bool g_allowPresentationToggle{};
 UINT g_presentationToggleKey = VK_F8;
 std::atomic<uint32_t> g_presentationMode{ACO_DLAA_PRESENT_GAME_TAA};
 std::atomic<bool> g_presentationToggleKeyDown{};
+std::atomic<bool> g_controlPanelKeyDown{};
 std::atomic<bool> g_initialHistoryResetSubmitted{};
 
 using DirectInput8CreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
@@ -88,6 +96,7 @@ using DllCanUnloadNowFn = HRESULT(WINAPI*)();
 using DllGetClassObjectFn = HRESULT(WINAPI*)(REFCLSID, REFIID, LPVOID*);
 using DllRegisterServerFn = HRESULT(WINAPI*)();
 using GetdfDIJoystickFn = LPCDIDATAFORMAT(WINAPI*)();
+using ExitProcessFn = void(WINAPI*)(UINT);
 
 using D3D11CreateDeviceFn = HRESULT(WINAPI*)(
     IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE, UINT, const D3D_FEATURE_LEVEL*, UINT, UINT,
@@ -98,6 +107,24 @@ using D3D11CreateDeviceAndSwapChainFn = HRESULT(WINAPI*)(
     ID3D11DeviceContext**);
 
 D3D11CreateDeviceFn g_realD3D11CreateDevice{};
+ExitProcessFn g_realExitProcess{};
+
+void WriteLog(const std::string& message);
+
+void WINAPI HookExitProcess(UINT exitCode)
+{
+    g_processShutdownStarted.store(true, std::memory_order_release);
+    std::lock_guard<std::mutex> bridgeLock(g_bridgeCallMutex);
+    WriteLog("PROCESS_SHUTDOWN_BEGIN source=ExitProcess code=" + std::to_string(exitCode));
+    ControlPanelShutdown();
+    if (g_bridgeShutdown)
+    {
+        const int32_t result = g_bridgeShutdown();
+        WriteLog("DLSSNR_EXPLICIT_SHUTDOWN result=" + std::to_string(result));
+    }
+    if (g_realExitProcess) g_realExitProcess(exitCode);
+    TerminateProcess(GetCurrentProcess(), exitCode);
+}
 D3D11CreateDeviceAndSwapChainFn g_realD3D11CreateDeviceAndSwapChain{};
 
 std::wstring ModuleDirectory()
@@ -114,6 +141,18 @@ std::wstring ModuleDirectory()
 std::wstring SiblingPath(const wchar_t* name)
 {
     return ModuleDirectory() + L"\\" + name;
+}
+
+std::wstring WidenUtf8(const std::string& text)
+{
+    if (text.empty()) return {};
+    const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(),
+        static_cast<int>(text.size()), nullptr, 0);
+    if (length <= 0) return L"DLSSNR status encoding failed";
+    std::wstring result(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+        result.data(), length);
+    return result;
 }
 
 void WriteLog(const std::string& message)
@@ -203,6 +242,49 @@ bool Sha256Bytes(const void* data, size_t size, std::array<uint8_t, 32>& digest)
     if (algorithm)
         BCryptCloseAlgorithmProvider(algorithm, 0);
     return ok;
+}
+
+bool CurrentExecutableMatchesSupportedBuild(std::string& actualHash)
+{
+    std::array<wchar_t, 32768> path{};
+    const DWORD pathLength = GetModuleFileNameW(
+        nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (!pathLength || pathLength >= path.size())
+        return false;
+
+    HANDLE file = CreateFileW(path.data(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+
+    LARGE_INTEGER fileSize{};
+    bool ok = GetFileSizeEx(file, &fileSize) != FALSE && fileSize.QuadPart > 0 &&
+        static_cast<unsigned long long>(fileSize.QuadPart) <=
+            static_cast<unsigned long long>(SIZE_MAX);
+    HANDLE mapping{};
+    const void* bytes{};
+    if (ok)
+    {
+        mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        ok = mapping != nullptr;
+    }
+    if (ok)
+    {
+        bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+        ok = bytes != nullptr;
+    }
+
+    std::array<uint8_t, 32> digest{};
+    if (ok)
+        ok = Sha256Bytes(bytes, static_cast<size_t>(fileSize.QuadPart), digest);
+    if (ok)
+        actualHash = Hex(digest.data(), digest.size());
+
+    if (bytes) UnmapViewOfFile(bytes);
+    if (mapping) CloseHandle(mapping);
+    CloseHandle(file);
+    return ok && actualHash == kSupportedExeSha256;
 }
 
 bool ContainsString(const void* data, size_t size, const char* text)
@@ -1080,11 +1162,20 @@ void STDMETHODCALLTYPE HookExecuteCommandList(ID3D11DeviceContext* self, ID3D11C
         auto* capture = reinterpret_cast<FrameCapture*>(unknown);
         if (capture->magic == FrameCapture::Magic)
         {
+            DWORD foregroundProcess{};
+            GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
+            const bool gameOwnsForeground = foregroundProcess == GetCurrentProcessId();
+            const bool panelKeyDown = gameOwnsForeground &&
+                (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
+            const bool panelKeyWasDown = g_controlPanelKeyDown.exchange(panelKeyDown);
+            if (panelKeyDown && !panelKeyWasDown)
+            {
+                ControlPanelToggle();
+                WriteLog("CONTROL_PANEL_TOGGLE key=F9");
+            }
             if (g_allowPresentationToggle)
             {
-                DWORD foregroundProcess{};
-                GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
-                const bool keyDown = foregroundProcess == GetCurrentProcessId() &&
+                const bool keyDown = gameOwnsForeground &&
                     (GetAsyncKeyState(static_cast<int>(g_presentationToggleKey)) & 0x8000) != 0;
                 const bool keyWasDown = g_presentationToggleKeyDown.exchange(keyDown);
                 if (keyDown && !keyWasDown)
@@ -1108,6 +1199,13 @@ void STDMETHODCALLTYPE HookExecuteCommandList(ID3D11DeviceContext* self, ID3D11C
             }
             if (g_bridgeEvaluate)
             {
+                std::lock_guard<std::mutex> bridgeLock(g_bridgeCallMutex);
+                if (g_processShutdownStarted.load(std::memory_order_acquire))
+                {
+                    unknown->Release();
+                    return;
+                }
+                const DlssNrControlSnapshot nr = ControlPanelSnapshot();
                 const uint32_t presentationMode =
                     g_presentationMode.load(std::memory_order_relaxed);
                 constexpr float jitterScale = 1.0f;
@@ -1149,6 +1247,24 @@ void STDMETHODCALLTYPE HookExecuteCommandList(ID3D11DeviceContext* self, ID3D11C
                 frame.jitterPhaseOffset = jitterPhaseOffset;
                 frame.jitterCycleVerified = jitterCycleVerified ? 1u : 0u;
                 frame.resetHistory = resetHistory ? 1u : 0u;
+                frame.dlssNrEnabled = nr.enabled ? 1u : 0u;
+                frame.dlssNrPreset = nr.preset;
+                frame.dlssNrStyle = nr.style;
+                frame.dlssNrIntensity = nr.intensity;
+                frame.dlssNrLocalTone = nr.localTone;
+                frame.dlssNrLocalStructure = nr.localStructure;
+                frame.dlssNrSkinStructure = nr.skinStructure;
+                frame.dlssNrAutoMask = nr.autoMask ? 1u : 0u;
+                frame.dlssNrUiCorrection = nr.uiCorrection ? 1u : 0u;
+                frame.dlssNrDepthConvention = nr.depthConvention;
+                frame.dlssNrMotionScaleX = nr.motionScaleX;
+                frame.dlssNrMotionScaleY = nr.motionScaleY;
+                frame.dlssNrControlCompatibleColor = nr.controlCompatibleColor ? 1u : 0u;
+                frame.dlssNrScenePaperWhiteScale = nr.scenePaperWhiteScale;
+                frame.dlssNrHdrTransferStrength = nr.hdrTransferStrength;
+                frame.dlssNrColorStrength = nr.colorStrength;
+                frame.dlssNrResetGeneration = nr.resetGeneration;
+                frame.dlssNrRetryGeneration = nr.retryGeneration;
                 const int32_t bridgeResult = g_bridgeEvaluate(&frame);
                 const uint64_t bridgeFrame = g_bridgeFrameCount.fetch_add(1) + 1;
                 const int32_t previous = g_lastBridgeResult.exchange(bridgeResult);
@@ -1164,6 +1280,30 @@ void STDMETHODCALLTYPE HookExecuteCommandList(ID3D11DeviceContext* self, ID3D11C
                                << jitterPhaseOffset << " cycle8=" << (jitterCycleVerified ? 1 : 0)
                                << " reset=" << (resetHistory ? 1 : 0);
                     WriteLog(bridgeLine.str());
+                }
+                if (g_bridgeGetDlssNrStatus)
+                {
+                    ACO_DLSSNR_Status status{};
+                    status.structSize = sizeof(status);
+                    if (g_bridgeGetDlssNrStatus(&status) == ACO_DLAA_OK)
+                    {
+                        const char* state = "unknown";
+                        switch (status.state)
+                        {
+                        case ACO_DLSSNR_DISABLED: state = "disabled"; break;
+                        case ACO_DLSSNR_READY: state = "ready"; break;
+                        case ACO_DLSSNR_WARMING_UP: state = "warming-up"; break;
+                        case ACO_DLSSNR_ACTIVE: state = "active"; break;
+                        case ACO_DLSSNR_BUSY_FALLBACK: state = "busy-fallback"; break;
+                        case ACO_DLSSNR_FAILURE_LATCHED: state = "failure-latched"; break;
+                        }
+                        std::ostringstream panel;
+                        panel << "NR=" << state << " | output="
+                              << PresentationModeName(presentationMode) << " | eval="
+                              << status.evaluatedFrames << " | warmup="
+                              << status.warmupFrames << "/8 | " << status.message;
+                        ControlPanelUpdateStatus(WidenUtf8(panel.str()));
+                    }
                 }
                 if (bridgeResult != ACO_DLAA_OK &&
                     g_presentationMode.exchange(ACO_DLAA_PRESENT_GAME_TAA) !=
@@ -1503,10 +1643,23 @@ T RealExport(const char* name)
 
 DWORD WINAPI HookWorker(void*)
 {
+    std::string executableHash;
+    if (!CurrentExecutableMatchesSupportedBuild(executableHash))
+    {
+        if (executableHash.empty())
+            WriteLog("ERROR executable SHA-256 could not be calculated; refusing graphics hooks");
+        else
+            WriteLog(std::string("ERROR unsupported ACOdyssey.exe SHA-256=") + executableHash +
+                " expected=" + kSupportedExeSha256 + "; refusing graphics hooks");
+        return 0;
+    }
+    WriteLog(std::string("EXECUTABLE_GATE passed sha256=") + executableHash);
+
     g_maxTaaDrawLogs = static_cast<uint32_t>(std::clamp(
         GetPrivateProfileIntW(L"Probe", L"MaxTaaDrawLogs", 256, SiblingPath(kConfigName).c_str()),
         0u, 4096u));
     const std::wstring configPath = SiblingPath(kConfigName);
+    ControlPanelInitialize(g_module, configPath);
     g_dlaaEnabled = GetPrivateProfileIntW(L"DLAA", L"Enable", 0, configPath.c_str()) != 0;
     g_evaluateOnly = GetPrivateProfileIntW(L"DLAA", L"EvaluateOnly", 1, configPath.c_str()) != 0;
     g_depthInverted = GetPrivateProfileIntW(L"DLAA", L"DepthInverted", 0, configPath.c_str()) != 0;
@@ -1531,8 +1684,12 @@ DWORD WINAPI HookWorker(void*)
         {
             g_bridgeEvaluate = reinterpret_cast<AcoDlaaEvaluateFn>(
                 GetProcAddress(g_bridgeModule, "ACO_DLAA_Evaluate"));
+            g_bridgeGetDlssNrStatus = reinterpret_cast<AcoDlssNrGetStatusFn>(
+                GetProcAddress(g_bridgeModule, "ACO_DLSSNR_GetStatus"));
+            g_bridgeShutdown = reinterpret_cast<AcoDlssNrShutdownFn>(
+                GetProcAddress(g_bridgeModule, "ACO_DLSSNR_Shutdown"));
         }
-        if (!g_bridgeEvaluate)
+        if (!g_bridgeEvaluate || !g_bridgeGetDlssNrStatus || !g_bridgeShutdown)
         {
             std::ostringstream line;
             line << "DLAA_BRIDGE_LOAD failed win32=" << GetLastError()
@@ -1547,7 +1704,7 @@ DWORD WINAPI HookWorker(void*)
                  (g_depthInverted ? "1" : "0") + " allowPresentationToggle=" +
                  (g_allowPresentationToggle ? "1" : "0") + " toggleKey=" +
                  std::to_string(g_presentationToggleKey));
-            WriteLog("RUNTIME_CONTROLS gui=0 hotkeys=F8-only fixedJitter=raw amplitude=1 signs=(1,1) phase=0");
+            WriteLog("RUNTIME_CONTROLS gui=F9-persistent hotkeys=F8-presentation,F9-panel fixedJitter=raw amplitude=1 signs=(1,1) phase=0");
         }
     }
     else
@@ -1559,6 +1716,18 @@ DWORD WINAPI HookWorker(void*)
     {
         WriteLog("ERROR MH_Initialize failed");
         return 0;
+    }
+    if (g_bridgeShutdown)
+    {
+        HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+        void* exitProcess = kernel32 ?
+            reinterpret_cast<void*>(GetProcAddress(kernel32, "ExitProcess")) : nullptr;
+        const MH_STATUS exitHook = exitProcess ? MH_CreateHook(exitProcess,
+            reinterpret_cast<void*>(HookExitProcess),
+            reinterpret_cast<void**>(&g_realExitProcess)) : MH_ERROR_NOT_EXECUTABLE;
+        if (exitHook != MH_OK)
+            WriteLog("WARNING ExitProcess shutdown hook unavailable status=" +
+                std::to_string(static_cast<int>(exitHook)));
     }
     HMODULE d3d11 = LoadLibraryExW(L"d3d11.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!d3d11)
@@ -1589,6 +1758,8 @@ DWORD WINAPI HookWorker(void*)
         return 0;
     }
     WriteLog("D3D11 creation hooks enabled; probe is passive and original draws remain active");
+    if (g_realExitProcess)
+        WriteLog("PROCESS_SHUTDOWN_HOOK enabled target=ExitProcess");
     return 0;
 }
 
@@ -1650,6 +1821,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
+        ControlPanelShutdown();
         if (g_log != INVALID_HANDLE_VALUE)
             CloseHandle(g_log);
         g_log = INVALID_HANDLE_VALUE;

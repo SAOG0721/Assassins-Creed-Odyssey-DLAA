@@ -55,6 +55,62 @@ struct ACO_DLAA_Frame
     uint32_t jitterCycleVerified;
     // One-frame reset request after a runtime jitter calibration change.
     uint32_t resetHistory;
+
+    // DLSS Neural Rendering is an optional one-to-one post-pass after the
+    // bridge's raw DLAA output.  It owns an independent reset/failure state so
+    // disabling it or changing its controls never invalidates DLAA history.
+    uint32_t dlssNrEnabled;
+    int32_t dlssNrPreset;       // 0 Default, 1 Preset #1, 2 Preset #2, 3 Preset #3.
+    int32_t dlssNrStyle;        // 0 Default, 1 Natural, 2 Cinematic.
+    float dlssNrIntensity;      // [0, 2]
+    float dlssNrLocalTone;      // [0, 2]
+    float dlssNrLocalStructure; // [0, 2]
+    float dlssNrSkinStructure;  // [-1, 2]
+    uint32_t dlssNrAutoMask;
+    uint32_t dlssNrUiCorrection;
+
+    // Advanced diagnostics. Depth convention: 0 game flag, 1 normal,
+    // 2 inverted. Motion multipliers are applied on top of Odyssey's audited
+    // normalized-UV to current->previous pixel conversion.
+    int32_t dlssNrDepthConvention;
+    float dlssNrMotionScaleX;
+    float dlssNrMotionScaleY;
+
+    // Addon-compatible color bridge controls. The default disabled path is a
+    // normalized UNORM <-> FP16 identity transfer suitable for Odyssey's LDR
+    // pre-tonemap TAA surface.
+    uint32_t dlssNrControlCompatibleColor;
+    float dlssNrScenePaperWhiteScale;
+    float dlssNrHdrTransferStrength;
+    float dlssNrColorStrength;
+
+    // Monotonic UI generations. resetGeneration requests one history reset;
+    // retryGeneration also clears the NR-only failure latch and recreates its
+    // feature without disturbing DLAA.
+    uint64_t dlssNrResetGeneration;
+    uint64_t dlssNrRetryGeneration;
+};
+
+enum ACO_DLSSNR_State : uint32_t
+{
+    ACO_DLSSNR_DISABLED = 0,
+    ACO_DLSSNR_READY = 1,
+    ACO_DLSSNR_WARMING_UP = 2,
+    ACO_DLSSNR_ACTIVE = 3,
+    ACO_DLSSNR_BUSY_FALLBACK = 4,
+    ACO_DLSSNR_FAILURE_LATCHED = 5,
+};
+
+struct ACO_DLSSNR_Status
+{
+    uint32_t structSize;
+    uint32_t state;
+    uint32_t failureLatched;
+    uint32_t warmupFrames;
+    uint64_t evaluatedFrames;
+    uint64_t lastSubmittedFence;
+    int32_t lastNgxResult;
+    char message[256];
 };
 
 enum ACO_DLAA_Result : int32_t
@@ -71,3 +127,5 @@ enum ACO_DLAA_Result : int32_t
 };
 
 using AcoDlaaEvaluateFn = int32_t(WINAPI*)(const ACO_DLAA_Frame* frame);
+using AcoDlssNrGetStatusFn = int32_t(WINAPI*)(ACO_DLSSNR_Status* status);
+using AcoDlssNrShutdownFn = int32_t(WINAPI*)();

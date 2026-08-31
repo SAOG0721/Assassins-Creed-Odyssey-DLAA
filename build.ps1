@@ -2,6 +2,7 @@
 param(
     [string]$NgxSdkRoot,
     [string]$NgxRuntime,
+    [string]$DlssNrRuntime,
     [string]$MinHookRoot = (Join-Path $PSScriptRoot 'third_party\minhook'),
     [string]$CMakePath,
     [string]$FxcPath
@@ -26,6 +27,7 @@ $configure = @('-S', $PSScriptRoot, '-B', $buildDir, '-G', 'Visual Studio 17 202
     "-DMINHOOK_ROOT=$MinHookRoot")
 if ($NgxSdkRoot) { $configure += "-DNGX_SDK_ROOT=$NgxSdkRoot" }
 if ($NgxRuntime) { $configure += "-DNGX_RUNTIME=$NgxRuntime" }
+if ($DlssNrRuntime) { $configure += "-DDLSSNR_RUNTIME=$DlssNrRuntime" }
 if ($FxcPath) { $configure += "-DFXC_EXECUTABLE=$FxcPath" }
 
 & $CMakePath @configure
@@ -39,7 +41,11 @@ $outputs = @(
     (Join-Path $buildDir 'bin\ACOdysseyDLSSBridge.dll'),
     (Join-Path $buildDir 'bin\ACOdysseyDLAA.motion_decode.cso'),
     (Join-Path $buildDir 'bin\ACOdysseyDLAA.sharpen.cso'),
-    (Join-Path $buildDir 'bin\nvngx_dlss.dll')
+    (Join-Path $buildDir 'bin\ACOdysseyDLSSNR.encode.cso'),
+    (Join-Path $buildDir 'bin\ACOdysseyDLSSNR.decode.cso'),
+    (Join-Path $buildDir 'bin\ACOdysseyDLSSNR.guide_unpack.cso'),
+    (Join-Path $buildDir 'bin\nvngx_dlss.dll'),
+    (Join-Path $buildDir 'bin\nvngx_dlssnr.dll')
 )
 foreach ($output in $outputs) {
     if (-not (Test-Path -LiteralPath $output)) { throw "Build output missing: $output" }

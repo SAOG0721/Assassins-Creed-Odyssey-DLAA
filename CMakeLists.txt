@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(acodyssey_dlaa VERSION 1.0.1 LANGUAGES C CXX)
+project(acodyssey_dlaa VERSION 1.1.0 LANGUAGES C CXX)
 
 set(MINHOOK_ROOT
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/minhook"
@@ -8,12 +8,17 @@ set(MINHOOK_ROOT
 
 set(NGX_SDK_ROOT "" CACHE PATH "NVIDIA NGX SDK root")
 set(NGX_RUNTIME "" CACHE FILEPATH "NVIDIA DLSS production runtime")
+set(DLSSNR_RUNTIME "" CACHE FILEPATH "Version-matched NVIDIA DLSS Neural Rendering runtime")
 
 if(NOT NGX_SDK_ROOT AND DEFINED ENV{NGX_SDK_ROOT})
     set(NGX_SDK_ROOT "$ENV{NGX_SDK_ROOT}" CACHE PATH "NVIDIA NGX SDK root" FORCE)
 endif()
 if(NOT NGX_RUNTIME AND DEFINED ENV{NGX_RUNTIME})
     set(NGX_RUNTIME "$ENV{NGX_RUNTIME}" CACHE FILEPATH "NVIDIA DLSS production runtime" FORCE)
+endif()
+if(NOT DLSSNR_RUNTIME AND DEFINED ENV{DLSSNR_RUNTIME})
+    set(DLSSNR_RUNTIME "$ENV{DLSSNR_RUNTIME}" CACHE FILEPATH
+        "Version-matched NVIDIA DLSS Neural Rendering runtime" FORCE)
 endif()
 
 if(NOT EXISTS "${MINHOOK_ROOT}/CMakeLists.txt")
@@ -25,6 +30,8 @@ add_subdirectory("${MINHOOK_ROOT}" "${CMAKE_BINARY_DIR}/third_party/minhook" EXC
 
 add_library(acodyssey-dinput8-proxy SHARED
     src/proxy.cpp
+    src/control_panel.cpp
+    src/control_panel.h
     src/bridge_api.h
     src/proxy.def
 )
@@ -52,6 +59,9 @@ endif()
 if(NOT EXISTS "${NGX_RUNTIME}")
     message(FATAL_ERROR "NGX production runtime was not found; set NGX_RUNTIME")
 endif()
+if(NOT EXISTS "${DLSSNR_RUNTIME}")
+    message(FATAL_ERROR "DLSSNR runtime was not found; set DLSSNR_RUNTIME")
+endif()
 
 set(MOTION_SHADER "${CMAKE_BINARY_DIR}/bin/ACOdysseyDLAA.motion_decode.cso")
 add_custom_command(
@@ -73,17 +83,54 @@ add_custom_command(
     VERBATIM
 )
 
+set(DLSSNR_ENCODE_SHADER "${CMAKE_BINARY_DIR}/bin/ACOdysseyDLSSNR.encode.cso")
+add_custom_command(
+    OUTPUT "${DLSSNR_ENCODE_SHADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/bin"
+    COMMAND "${FXC_EXECUTABLE}" /nologo /T cs_5_0 /E main /O3 /Ges
+            /Fo "${DLSSNR_ENCODE_SHADER}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/dlssnr_encode.hlsl"
+    DEPENDS shaders/dlssnr_encode.hlsl
+    VERBATIM
+)
+
+set(DLSSNR_DECODE_SHADER "${CMAKE_BINARY_DIR}/bin/ACOdysseyDLSSNR.decode.cso")
+add_custom_command(
+    OUTPUT "${DLSSNR_DECODE_SHADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/bin"
+    COMMAND "${FXC_EXECUTABLE}" /nologo /T cs_5_0 /E main /O3 /Ges
+            /Fo "${DLSSNR_DECODE_SHADER}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/dlssnr_decode.hlsl"
+    DEPENDS shaders/dlssnr_decode.hlsl
+    VERBATIM
+)
+
+set(DLSSNR_GUIDE_SHADER "${CMAKE_BINARY_DIR}/bin/ACOdysseyDLSSNR.guide_unpack.cso")
+add_custom_command(
+    OUTPUT "${DLSSNR_GUIDE_SHADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/bin"
+    COMMAND "${FXC_EXECUTABLE}" /nologo /T cs_5_1 /E main /O3 /Ges
+            /Fo "${DLSSNR_GUIDE_SHADER}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/dlssnr_guide_unpack.hlsl"
+    DEPENDS shaders/dlssnr_guide_unpack.hlsl
+    VERBATIM
+)
+
 add_library(acodyssey-dlss-bridge SHARED
     src/bridge.cpp
     src/bridge_api.h
+    src/dlssnr_d3d12_bridge.cpp
+    src/dlssnr_d3d12_bridge.h
     "${MOTION_SHADER}"
     "${SHARPEN_SHADER}"
+    "${DLSSNR_ENCODE_SHADER}"
+    "${DLSSNR_DECODE_SHADER}"
+    "${DLSSNR_GUIDE_SHADER}"
 )
 target_compile_features(acodyssey-dlss-bridge PRIVATE cxx_std_20)
 target_compile_definitions(acodyssey-dlss-bridge PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_include_directories(acodyssey-dlss-bridge PRIVATE "${NGX_SDK_ROOT}/include")
 target_link_libraries(acodyssey-dlss-bridge PRIVATE
     d3d11
+    d3d12
+    dxgi
     version
     "${NGX_SDK_ROOT}/lib/Windows_x86_64/nvsdk_ngx_d.lib"
 )
@@ -107,6 +154,11 @@ target_compile_definitions(ngx-synthetic-smoke PRIVATE UNICODE _UNICODE)
 target_include_directories(ngx-synthetic-smoke PRIVATE src)
 target_link_libraries(ngx-synthetic-smoke PRIVATE d3d11)
 
+add_executable(d3d11-d3d12-interop-smoke tests/d3d11_d3d12_interop_smoke.cpp)
+target_compile_features(d3d11-d3d12-interop-smoke PRIVATE cxx_std_17)
+target_compile_definitions(d3d11-d3d12-interop-smoke PRIVATE UNICODE _UNICODE)
+target_link_libraries(d3d11-d3d12-interop-smoke PRIVATE d3d11 d3d12 dxgi)
+
 target_compile_features(acodyssey-dinput8-proxy PRIVATE cxx_std_20)
 target_compile_definitions(acodyssey-dinput8-proxy PRIVATE
     WIN32_LEAN_AND_MEAN
@@ -118,6 +170,7 @@ target_compile_definitions(acodyssey-dinput8-proxy PRIVATE
 target_link_libraries(acodyssey-dinput8-proxy PRIVATE
     minhook
     bcrypt
+    comctl32
 )
 
 if(MSVC)
@@ -133,6 +186,7 @@ if(MSVC)
     target_compile_options(execute-detour-smoke PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(bridge-smoke PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(ngx-synthetic-smoke PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(d3d11-d3d12-interop-smoke PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(acodyssey-dlss-bridge PRIVATE /W4 /permissive- /guard:cf /utf-8 /EHsc)
     target_link_options(acodyssey-dlss-bridge PRIVATE /guard:cf)
 endif()
@@ -154,4 +208,6 @@ set_target_properties(acodyssey-dlss-bridge PROPERTIES
 add_custom_command(TARGET acodyssey-dlss-bridge POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${NGX_RUNTIME}" "${CMAKE_BINARY_DIR}/bin/nvngx_dlss.dll"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${DLSSNR_RUNTIME}" "${CMAKE_BINARY_DIR}/bin/nvngx_dlssnr.dll"
 )

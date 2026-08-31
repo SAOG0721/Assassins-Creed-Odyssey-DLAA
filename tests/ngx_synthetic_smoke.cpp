@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include "bridge_api.h"
@@ -24,7 +25,11 @@ int wmain(int argc, wchar_t** argv)
     }
     const auto evaluate = reinterpret_cast<AcoDlaaEvaluateFn>(
         GetProcAddress(bridge, "ACO_DLAA_Evaluate"));
-    if (!evaluate) return 4;
+    const auto getDlssNrStatus = reinterpret_cast<AcoDlssNrGetStatusFn>(
+        GetProcAddress(bridge, "ACO_DLSSNR_GetStatus"));
+    const auto shutdownDlssNr = reinterpret_cast<AcoDlssNrShutdownFn>(
+        GetProcAddress(bridge, "ACO_DLSSNR_Shutdown"));
+    if (!evaluate || !getDlssNrStatus || !shutdownDlssNr) return 4;
 
     D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL level{};
@@ -158,6 +163,36 @@ int wmain(int argc, wchar_t** argv)
     const int32_t first = evaluate(&frame);
     const int32_t second = evaluate(&frame);
     if (first != ACO_DLAA_OK || second != ACO_DLAA_OK) return 11;
+
+    // Exercise the same D3D11-core + private-D3D12-core bootstrap used by
+    // Odyssey. Feature 18 may still be rejected by a non-game test process,
+    // but static D3D12 parameter allocation must no longer report NotInitialized.
+    frame.dlssNrEnabled = 1;
+    frame.dlssNrPreset = 0;
+    frame.dlssNrStyle = 0;
+    frame.dlssNrIntensity = 1.0f;
+    frame.dlssNrLocalTone = 1.0f;
+    frame.dlssNrLocalStructure = 1.0f;
+    frame.dlssNrSkinStructure = -1.0f;
+    frame.dlssNrAutoMask = 1;
+    frame.dlssNrUiCorrection = 1;
+    frame.dlssNrDepthConvention = 0;
+    frame.dlssNrMotionScaleX = 1.0f;
+    frame.dlssNrMotionScaleY = 1.0f;
+    frame.dlssNrScenePaperWhiteScale = 1.0f;
+    frame.dlssNrColorStrength = 1.0f;
+    const int32_t nrBootstrap = evaluate(&frame);
+    ACO_DLSSNR_Status nrStatus{};
+    nrStatus.structSize = sizeof(nrStatus);
+    if (nrBootstrap != ACO_DLAA_OK || getDlssNrStatus(&nrStatus) != ACO_DLAA_OK) return 14;
+    const std::string nrMessage(nrStatus.message);
+    if (static_cast<uint32_t>(nrStatus.lastNgxResult) == 0xbad00007u ||
+        nrMessage.find("AllocateParameters") != std::string::npos)
+        return 15;
+    if (nrStatus.state != ACO_DLSSNR_WARMING_UP || nrStatus.evaluatedFrames < 1 ||
+        nrStatus.lastNgxResult != 0x00000001)
+        return 16;
+
     context->CopyResource(staging.Get(), gameOutput.Get());
     if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return 12;
     uint8_t minimum = 255;
@@ -179,7 +214,13 @@ int wmain(int argc, wchar_t** argv)
     std::cout << "synthetic-background=" << background
               << " game-taa-preserved=" << (gameTaaPreserved ? 1 : 0)
               << " synthetic-evaluate-1=" << first << " synthetic-evaluate-2=" << second
+              << " nr-bootstrap=" << nrBootstrap << " nr-state=" << nrStatus.state
+              << " nr-ngx=0x" << std::hex << static_cast<uint32_t>(nrStatus.lastNgxResult)
+              << std::dec << " nr-message=" << nrMessage
               << " presented-min=" << static_cast<unsigned int>(minimum)
               << " presented-max=" << static_cast<unsigned int>(maximum) << '\n';
-    return maximum > minimum ? 0 : 13;
+    const bool outputVaries = maximum > minimum;
+    const int32_t shutdownResult = shutdownDlssNr();
+    std::cout << "nr-shutdown=" << shutdownResult << '\n';
+    return outputVaries && shutdownResult == ACO_DLAA_OK ? 0 : 13;
 }

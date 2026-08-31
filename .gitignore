@@ -2,12 +2,14 @@
 /dist/
 /.vs/
 *.log
+*.dmp
 *.pdb
 *.user
 *.suo
 *.VC.db
 CMakeUserPresets.json
 .acodyssey-dlaa-deployment.json
+nvngx*.dll
 third_party/minhook/.git.local-not-published/
 third_party/minhook/.github.local-not-published/
 third_party/minhook/build.local-not-published/
