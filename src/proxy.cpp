@@ -30,8 +30,6 @@ constexpr uint32_t kShaderInfoMagic = 0x41415441; // "ATAA"
 constexpr wchar_t kConfigName[] = L"ACOdysseyDLAA.ini";
 constexpr wchar_t kLogName[] = L"ACOdysseyDLAA.log";
 constexpr wchar_t kBridgeName[] = L"ACOdysseyDLSSBridge.dll";
-constexpr char kSupportedExeSha256[] =
-    "AC327DAD2CBBDD72A3FDA8E99CBEAB9D12AF328363E4F09BC5674BDD36B8C483";
 
 constexpr GUID kShaderInfoGuid{
     0x9144a0c4, 0xdfcc, 0x4797, {0xa1, 0x4a, 0x31, 0x51, 0xba, 0xa1, 0xf9, 0x20}};
@@ -242,49 +240,6 @@ bool Sha256Bytes(const void* data, size_t size, std::array<uint8_t, 32>& digest)
     if (algorithm)
         BCryptCloseAlgorithmProvider(algorithm, 0);
     return ok;
-}
-
-bool CurrentExecutableMatchesSupportedBuild(std::string& actualHash)
-{
-    std::array<wchar_t, 32768> path{};
-    const DWORD pathLength = GetModuleFileNameW(
-        nullptr, path.data(), static_cast<DWORD>(path.size()));
-    if (!pathLength || pathLength >= path.size())
-        return false;
-
-    HANDLE file = CreateFileW(path.data(), GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (file == INVALID_HANDLE_VALUE)
-        return false;
-
-    LARGE_INTEGER fileSize{};
-    bool ok = GetFileSizeEx(file, &fileSize) != FALSE && fileSize.QuadPart > 0 &&
-        static_cast<unsigned long long>(fileSize.QuadPart) <=
-            static_cast<unsigned long long>(SIZE_MAX);
-    HANDLE mapping{};
-    const void* bytes{};
-    if (ok)
-    {
-        mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
-        ok = mapping != nullptr;
-    }
-    if (ok)
-    {
-        bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
-        ok = bytes != nullptr;
-    }
-
-    std::array<uint8_t, 32> digest{};
-    if (ok)
-        ok = Sha256Bytes(bytes, static_cast<size_t>(fileSize.QuadPart), digest);
-    if (ok)
-        actualHash = Hex(digest.data(), digest.size());
-
-    if (bytes) UnmapViewOfFile(bytes);
-    if (mapping) CloseHandle(mapping);
-    CloseHandle(file);
-    return ok && actualHash == kSupportedExeSha256;
 }
 
 bool ContainsString(const void* data, size_t size, const char* text)
@@ -1643,18 +1598,6 @@ T RealExport(const char* name)
 
 DWORD WINAPI HookWorker(void*)
 {
-    std::string executableHash;
-    if (!CurrentExecutableMatchesSupportedBuild(executableHash))
-    {
-        if (executableHash.empty())
-            WriteLog("ERROR executable SHA-256 could not be calculated; refusing graphics hooks");
-        else
-            WriteLog(std::string("ERROR unsupported ACOdyssey.exe SHA-256=") + executableHash +
-                " expected=" + kSupportedExeSha256 + "; refusing graphics hooks");
-        return 0;
-    }
-    WriteLog(std::string("EXECUTABLE_GATE passed sha256=") + executableHash);
-
     g_maxTaaDrawLogs = static_cast<uint32_t>(std::clamp(
         GetPrivateProfileIntW(L"Probe", L"MaxTaaDrawLogs", 256, SiblingPath(kConfigName).c_str()),
         0u, 4096u));

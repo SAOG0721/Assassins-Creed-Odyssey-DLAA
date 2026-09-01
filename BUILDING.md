@@ -40,8 +40,9 @@ After a Release build:
 .\build\Release\d3d11-vtable-indices.exe
 .\build\Release\execute-detour-smoke.exe
 .\build\Release\d3d11-d3d12-interop-smoke.exe
-.\build\Release\bridge-smoke.exe .\build\bin\ACOdysseyDLSSBridge.dll
-.\build\Release\ngx-synthetic-smoke.exe .\build\bin\ACOdysseyDLSSBridge.dll
+$bridge = (Resolve-Path .\build\bin\ACOdysseyDLSSBridge.dll).Path
+.\build\Release\bridge-smoke.exe $bridge
+.\build\Release\ngx-synthetic-smoke.exe $bridge
 ```
 
 All five commands must exit with code `0`. The interop and synthetic NGX tests require compatible
@@ -51,6 +52,6 @@ shutdown. It does not prove in-game guide semantics or visual quality.
 
 ## Runtime safety boundary
 
-The current proxy is executable-hash-gated to the audited Steam build and also validates temporal
-shaders and resources at runtime. The original Game TAA is preserved when a compatible path is not
-found or any DLAA/DLSS 5 stage fails.
+The current proxy does not enforce a game-executable hash. It validates the live temporal shader,
+resource and constant-buffer contract at runtime. The original Game TAA is preserved when a
+compatible path is not found or any DLAA/DLSS 5 stage fails.
